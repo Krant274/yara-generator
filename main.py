@@ -51,19 +51,16 @@ class AutoYARAPipeline:
         
         collector = MalwareCollector(samples_dir)
         
-        source = self.config.get("source", "directory")
+        input_dir = self.config.get("input_dir")
+        if not input_dir:
+            print("[!] Error: --input-dir required")
+            return samples_dir
         
-        if source == "directory":
-            input_dir = self.config.get("input_dir")
-            if not input_dir:
-                print("[!] Error: --input-dir required")
-                return samples_dir
-            collector.collect_from_directory(input_dir, self.family_name)
-        elif source == "malwarebazaar":
-            collector.collect_from_malwarebazaar(
-                self.family_name,
-                self.config.get("sample_count", 30)
-            )
+        if not os.path.exists(input_dir):
+            print(f"[!] Input directory not found: {input_dir}")
+            return samples_dir
+            
+        collector.collect_from_directory(input_dir, self.family_name)
         
         collector.save_manifest(os.path.join(samples_dir, "manifest.json"))
         print(f"    Collected: {len(collector.samples)} samples")
@@ -150,7 +147,8 @@ class AutoYARAPipeline:
         print("[*] Phase 3: Feature Synthesis")
         
         min_freq = self.config.get("min_frequency", 0.7)
-        synthesizer = FeatureSynthesizer(min_frequency=min_freq)
+        dbs_dir = self.config.get("dbs_dir", "./dbs")
+        synthesizer = FeatureSynthesizer(min_frequency=min_freq, dbs_dir=dbs_dir, auto_download=True)
         features = synthesizer.synthesize(analyses)
         
         # Save features
@@ -209,12 +207,10 @@ class AutoYARAPipeline:
 def main():
     parser = argparse.ArgumentParser(description="Auto-YARA Generator")
     parser.add_argument("--family", required=True, help="Malware family name")
-    parser.add_argument("--source", choices=["malwarebazaar", "directory"],
-                       default="directory", help="Sample source")
-    parser.add_argument("--input-dir", help="Input directory (for directory source)")
-    parser.add_argument("--sample-count", type=int, default=30, help="Number of samples")
-    parser.add_argument("--min-freq", type=float, default=0.5, help="Min feature frequency (0.3-0.7)")
+    parser.add_argument("--input-dir", required=True, help="Input directory containing malware samples")
+    parser.add_argument("--min-freq", type=float, default=0.7, help="Min feature frequency (0.3-1.0)")
     parser.add_argument("--output", default="./output", help="Output directory")
+    parser.add_argument("--dbs-dir", default="./dbs", help="Directory containing yarGen whitelist databases")
     
     args = parser.parse_args()
     
@@ -222,15 +218,12 @@ def main():
         print("[!] min-freq must be between 0.3 and 1.0")
         return
     
-    args = parser.parse_args()
-    
     config = {
         "family_name": args.family,
-        "source": args.source,
         "input_dir": args.input_dir,
-        "sample_count": args.sample_count,
         "min_frequency": args.min_freq,
-        "work_dir": args.output
+        "work_dir": args.output,
+        "dbs_dir": args.dbs_dir
     }
     
     pipeline = AutoYARAPipeline(config)

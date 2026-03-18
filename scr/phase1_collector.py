@@ -1,12 +1,13 @@
 # src/phase1_collector.py
 import os
 import hashlib
-import requests
 import json
 import shutil
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 from datetime import datetime
+
+
 @dataclass
 class MalwareSample:
     file_path: str
@@ -14,61 +15,18 @@ class MalwareSample:
     variant: str
     md5: str
     sha256: str
-    source: str  # VirusTotal, MalwareBazaar, internal
+    source: str
     collection_date: str
-    file_type: str  # PE32, PE64, ELF
+    file_type: str
+
+
 class MalwareCollector:
-    """Giai đoạn 1: Thu thập mẫu malware từ các nguồn"""
+    """Giai đoạn 1: Thu thập mẫu malware từ thư mục người dùng cung cấp"""
     
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         self.samples: List[MalwareSample] = []
         os.makedirs(output_dir, exist_ok=True)
-    
-    def collect_from_malwarebazaar(self, family: str, limit: int = 30) -> List[MalwareSample]:
-        """Thu thập từ MalwareBazaar API"""
-        # Ghi chú: Cần API key từ https://bazaar.abuse.ch/api/
-        api_key = os.getenv("MALWAREBazaar_API_KEY")
-        
-        if not api_key:
-            print("[!] Cần API key từ MalwareBazaar")
-            return []
-        
-        url = "https://mb-api.abuse.ch/api/v1/"
-        payload = {
-            "query": "get_taginfo",
-            "tag": family,
-            "limit": limit
-        }
-        headers = {"API-KEY": api_key}
-        
-        try:
-            response = requests.post(url, data=payload, headers=headers, timeout=30)
-            data = response.json()
-            
-            for item in data.get("data", []):
-                sample = MalwareSample(
-                    file_path=os.path.join(self.output_dir, item["sha256"]),
-                    family=family,
-                    variant=item.get("signature", "unknown"),
-                    md5=item["md5_hash"],
-                    sha256=item["sha256_hash"],
-                    source="MalwareBazaar",
-                    collection_date=datetime.now().isoformat(),
-                    file_type=item.get("file_type", "PE32")
-                )
-                self.samples.append(sample)
-                
-        except Exception as e:
-            print(f"[!] Lỗi kết nối MalwareBazaar: {e}")
-        
-        return self.samples
-    
-    def collect_from_virustotal(self, family: str, limit: int = 30) -> List[MalwareSample]:
-        """Thu thập từ VirusTotal API"""
-        # Cần VT API key - chưa hỗ trợ
-        print("[!] VirusTotal chưa được hỗ trợ")
-        return self.samples
     
     def collect_from_directory(self, directory: str, family: str) -> List[MalwareSample]:
         """Thu thập từ thư mục nội bộ (mỗi subdirectory = 1 mẫu malware, tất cả files)"""
@@ -107,12 +65,12 @@ class MalwareCollector:
                     shutil.copy2(src_file, dest_path)
                 
                 sample = MalwareSample(
-                    file_path=variant_dir,  # Store directory path instead of single file
+                    file_path=variant_dir,
                     family=family,
                     variant=variant_name,
                     md5=md5,
                     sha256=sha256,
-                    source="internal",
+                    source="user_provided",
                     collection_date=datetime.now().isoformat(),
                     file_type=self._detect_file_type(main_file)
                 )
@@ -153,21 +111,14 @@ class MalwareCollector:
         return None
     
     def _is_valid_malware(self, file_path: str) -> bool:
-        """Kiểm tra file có phải malware hợp lệ"""
+        """Kiểm tra file có phải malware hợp lệ (chấp nhận tất cả các loại file)"""
         if not os.path.isfile(file_path):
             return False
         
         size = os.path.getsize(file_path)
         
-        # Document-based malware can be smaller (10KB - 50MB)
-        doc_exts = ['.xls', '.xlsx', '.doc', '.docm', '.ppt', '.pptm', '.txt', '.nfo', '.src']
-        ext = os.path.splitext(file_path)[1].lower()
-        
-        if ext in doc_exts:
-            return 1024 * 10 <= size <= 1024 * 1024 * 50
-        
-        # Executable malware: 100KB - 50MB
-        return 1024 * 100 <= size <= 1024 * 1024 * 50
+        # Chấp nhận tất cả các file có kích thước hợp lý
+        return 512 <= size <= 1024 * 1024 * 100
     
     def _calculate_hashes(self, file_path: str) -> tuple:
         """Tính MD5 và SHA256"""
@@ -187,13 +138,12 @@ class MalwareCollector:
             magic = f.read(2)
             
             if magic == b"MZ":
-                # Kiểm tra PE32 vs PE64
                 pe_offset = int.from_bytes(f.read(4), "little")
                 f.seek(pe_offset + 4)
                 machine = int.from_bytes(f.read(2), "little")
                 return "PE64" if machine == 0x8664 else "PE32"
             
-            elif magic == b"\x7fEF":  # ELF
+            elif magic == b"\x7fEF":
                 return "ELF"
             
             elif magic[:4] == b"\x89PNG":

@@ -23,11 +23,10 @@ class FeatureSynthesizer:
     
     def __init__(self, min_frequency: float = 0.7, dbs_dir: str = None, auto_download: bool = True):
         self.min_frequency = min_frequency
-        self.auto_download = auto_download
         self.dbs_dir = dbs_dir
-        self.whitelist = self._load_yargen_whitelist(dbs_dir)
+        self.whitelist = self._load_whitelist_from_dbs(dbs_dir, auto_download)
     
-    def _load_yargen_whitelist(self, dbs_dir: str = None) -> Dict[str, Set[str]]:
+    def _load_whitelist_from_dbs(self, dbs_dir: str = None, auto_download: bool = True) -> Dict[str, Set[str]]:
         """Load whitelist từ yarGen databases (strings + opcodes)"""
         whitelist = {
             "strings": set(),
@@ -40,7 +39,7 @@ class FeatureSynthesizer:
         self.dbs_dir = dbs_dir
         
         # Check and download databases if needed
-        if self.auto_download:
+        if auto_download:
             from .utils.downloader import download_yargen_databases, check_databases
             if not check_databases(dbs_dir):
                 print(f"[*] yarGen databases missing. Downloading...")
@@ -55,7 +54,11 @@ class FeatureSynthesizer:
         import glob
         string_dbs = glob.glob(os.path.join(dbs_dir, "good-strings-part*.db"))
         
-        print(f"[*] Loading yarGen whitelist...")
+        print(f"[*] Loading whitelist from dbs folder...")
+        
+        if not string_dbs:
+            print(f"[!] No whitelist databases found in {dbs_dir}")
+            return whitelist
         
         for db_file in string_dbs:
             try:
@@ -221,25 +224,10 @@ class FeatureSynthesizer:
         
         return common_features
     
-    def _load_whitelist(self) -> Set[Tuple[str, str]]:
-        """Load whitelist để lọc features phổ biến trong phần mềm lành tính"""
-        # Chỉ whitelist những thứ thực sự phổ biến trong mọi phần mềm
-        whitelist = {
-            # Very common benign strings
-            ("Microsoft", "string"),
-            ("Windows", "string"),
-            ("Program Files", "string"),
-            ("System32", "string"),
-            ("C:\\Windows", "string"),
-        }
-        
-        return whitelist
-    
     def _is_whitelisted(self, value: str, feature_type: str) -> bool:
-        """Kiểm tra feature có trong yarGen whitelist không"""
+        """Kiểm tra feature có trong whitelist từ thư mục dbs không"""
         value_lower = value.lower()
         
-        # Check string whitelist
         if feature_type == "opcodes":
             whitelist_set = self.whitelist.get("opcodes", set())
             if value in whitelist_set:
@@ -250,13 +238,6 @@ class FeatureSynthesizer:
                 return True
             
             if value_lower in whitelist_set:
-                return True
-        
-        # Check partial match for very common benign strings
-        common_benign = ['microsoft', 'windows', 'program files', 'system32', 
-                        'kernel32', 'user32', 'advapi32', 'ntdll', 'msvcrt']
-        for benign in common_benign:
-            if benign in value_lower:
                 return True
         
         return False

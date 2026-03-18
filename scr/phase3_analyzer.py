@@ -249,8 +249,8 @@ class StaticAnalyzer:
             
         except ImportError:
             print("        [!] pip install pefile")
-        except Exception as e:
-            print(f"        [!] PE parse error: {e}")
+        except Exception:
+            pass
         
         return features
     

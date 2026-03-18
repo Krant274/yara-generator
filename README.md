@@ -4,9 +4,9 @@ Tự động sinh luật YARA từ mẫu malware cùng họ (family).
 
 ## Tính năng
 
-- Thu thập mẫu malware từ thư mục
+- Thu thập mẫu malware từ thư mục do người dùng cung cấp
 - Phân tích tĩnh (strings, imports, PE metadata, entropy, opcodes)
-- Lọc whitelist sử dụng yarGen databases (12M+ strings, 32M+ opcodes)
+- Lọc whitelist sử dụng yarGen databases từ thư mục `dbs/`
 - Sinh luật YARA với metadata và source tracking
 
 ## Yêu cầu
@@ -37,25 +37,20 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Download yarGen databases (tự động)
-Lần đầu chạy pipeline sẽ tự động download databases (~400MB).
+### 3. Chạy pipeline
+Lần đầu chạy, nếu chưa có whitelist databases trong thư mục `dbs/`, pipeline sẽ tự động tải về (~400MB).
 
 ## Sử dụng
 
-### Chạy pipeline cơ bản
+### Chạy pipeline
 ```bash
 source venv/bin/activate
-python main.py --family WannaCry --source directory --input-dir /path/to/malware samples/
-```
-
-### Tùy chọn đầy đủ
-```bash
 python main.py \
     --family "Ransomware.WannaCry" \
-    --source directory \
-    --input-dir /data/samples/WannaCry \
+    --input-dir /path/to/malware/samples \
     --min-freq 0.7 \
-    --output-dir ./output
+    --output ./output \
+    --dbs-dir ./dbs
 ```
 
 ### Tham số
@@ -63,11 +58,10 @@ python main.py \
 | Tham số | Mô tả | Mặc định |
 |---------|-------|-----------|
 | `--family` | Tên malware family | Required |
-| `--source` | Loại nguồn (`directory`) | directory |
 | `--input-dir` | Thư mục chứa mẫu malware | Required |
-| `--min-freq` | Tần suất tối thiểu (0.0-1.0) | 0.7 |
-| `--output-dir` | Thư mục output | ./output |
-| `--dbs-dir` | Thư mục yarGen databases | ./dbs |
+| `--min-freq` | Tần suất tối thiểu (0.3-1.0) | 0.7 |
+| `--output` | Thư mục output | ./output |
+| `--dbs-dir` | Thư mục chứa whitelist databases | ./dbs |
 
 ## Cấu trúc thư mục mẫu
 
@@ -78,7 +72,6 @@ malware_samples/
 │   └── sample2.exe
 ├── Ransomware.WannaCry_Plus/
 │   └── sample3.exe
-└── ...
 ```
 
 ## Output
@@ -99,7 +92,10 @@ rule WannaCry_strings {
 
 ## Database
 
-- **yarGen whitelist**: 44 files từ https://github.com/Neo23x0/yarGen-dbs
-- Tự động download lần đầu
-- Bao gồm: good-strings, good-opcodes, good-imphashes, good-exports
+Lần đầu chạy pipeline, nếu thư mục `dbs/` chưa có databases, chương trình sẽ tự động tải yarGen whitelist databases về (~400MB).
 
+Whitelist được load từ thư mục `dbs/`:
+- **good-strings-*.db**: Strings từ phần mềm lành tính
+- **good-opcodes-*.db**: Opcodes từ phần mềm lành tính
+
+Tải databases từ: https://github.com/Neo23x0/yarGen-dbs
