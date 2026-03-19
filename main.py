@@ -155,7 +155,7 @@ class AutoYARAPipeline:
         output = {}
         for ftype, flist in features.items():
             output[ftype] = [
-                {"value": f.value, "frequency": f.frequency, "count": f.samples_count}
+                {"value": f.value, "frequency": f.frequency, "count": f.samples_count, "score": f.score}
                 for f in flist[:50]
             ]
         
