@@ -9,7 +9,7 @@ import base64
 import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -125,23 +125,115 @@ class StaticAnalyzer:
         return b64_strings
     
     def _extract_reversed_strings(self, data: bytes) -> Set[str]:
-        """Trích xuất reversed strings (thường dùng trong malware)"""
+        """Trích xuất reversed strings (thường dùng trong malware)
+        
+        Cải thiện:
+        - Chỉ giữ lại reversed strings có pattern đặc biệt (malware indicators)
+        - Lọc bỏ các reversed strings phổ biến
+        """
         reversed_strings = set()
         
-        # Tìm strings có thể là reversed
+        # Patterns đặc biệt - reversed strings có thể là malware indicators
+        MALWARE_REVERSED_PATTERNS = [
+            r'exe\.dmc',           # reversed: "cmd.exe"
+            r'dmc\.exe',          # reversed: "exe.cmd"
+            r'sses\.exe',          # reversed: "exe.sse" 
+            r'dmc',                # reversed: "cmd"
+            r'noisrev',            # reversed: "version"
+            r'resu',              # reversed: "user"
+            r'ssap',              # reversed: "pass"
+            r'drowssap',          # reversed: "password"
+            r'krow',              # reversed: "work"
+            r'gol',                # reversed: "log"
+            r'taercs',            # reversed: "secret"
+            r'xotno',              # reversed: "notox"
+            r'tiderc',            # reversed: "credit"
+            r'ssecorp',           # reversed: "process"
+            r'ssolc',             # reversed: "close"
+            r'elppa',             # reversed: "apple"
+            r'taolf',             # reversed: "float"
+            r'noitcnuf',          # reversed: "function"
+            r'ssegami',           # reversed: "image"
+            r'evird',             # reversed: "drive"
+            r'pirts',             # reversed: "strip"
+            r'xedni',             # reversed: "index"
+            r'dnar',              # reversed: "rand"
+            r'tseug',             # reversed: "guest"
+            r'taerc',             # reversed: "creat"
+            r'nosj',              # reversed: "json"
+            r'diov',              # reversed: "void"
+            r'xob',                # reversed: "box"
+            r'diov',              # reversed: "void"
+            r'elgoog',           # reversed: "google"
+            r'rah',               # reversed: "har" (ihar = riha)
+            r'reif',              # reversed: "fire"
+            r'retupmoc',          # reversed: "computer"
+            r'sserdda',           # reversed: "address"
+            r'teniF',             # reversed: "File"
+            r'su',               # reversed: "us"
+            r'ts',               # reversed: "st"
+        ]
+        
+        # Compile patterns
+        import re
+        compiled_patterns = [re.compile(p, re.IGNORECASE) for p in MALWARE_REVERSED_PATTERNS]
+        
+        # Tìm tất cả ASCII strings trong file
         ascii_strings = re.findall(rb'[\x20-\x7E]{6,}', data)
+        
+        # Common strings that when reversed are still meaningless - skip these
+        COMMON_STRINGS = {
+            'example', 'elpmaxe', 'sample', 'elpmas', 'string', 'gnirts',
+            'number', 'rebmuN', 'output', 'tuptuo', 'input', 'tupni',
+            'object', 'tcejbo', 'method', 'dohtem', 'system', 'metsys',
+            'return', 'nruter', 'config', 'xofnigc', 'public', 'cublip',
+            'server', 'revres', 'client', 'tnialc', 'process', 'ssecorp',
+            'kernel', 'lenrek', 'window', 'wodniW', 'system32', '23metsy',
+            'program', 'margorp', 'windowS', 'SwodniW', 'microsoft', 'tfosorciM',
+        }
         
         for s in ascii_strings:
             try:
                 normal = s.decode('ascii')
                 reversed_str = normal[::-1]
+                normal_lower = normal.lower()
+                reversed_lower = reversed_str.lower()
                 
-                # Kiểm tra reversed có ý nghĩa không
-                # (không phải palindrome, có nghĩa khi đảo ngược)
-                if normal != reversed_str and len(normal) >= 6:
-                    # Check if reversed version is also a valid string
-                    if all(c in string.printable for c in reversed_str[:10]):
-                        reversed_strings.add(reversed_str)
+                # Skip if same (palindrome or too short)
+                if normal == reversed_str or len(normal) < 6:
+                    continue
+                
+                # Skip if NOT printable
+                if not all(c in string.printable for c in reversed_str[:10]):
+                    continue
+                
+                # Skip if BOTH normal and reversed are common strings
+                if normal_lower in COMMON_STRINGS and reversed_lower in COMMON_STRINGS:
+                    continue
+                
+                # Check if reversed string matches special malware patterns
+                is_malware_pattern = any(p.search(reversed_str) for p in compiled_patterns)
+                
+                # Check if normal string is likely malware-related
+                malware_keywords = [
+                    'cmd', 'exe', 'dll', 'sys', 'bat', 'ps1', 'vbs', 'js', 'wsf', 'com',
+                    'password', 'pass', 'user', 'admin', 'root', 'login', 'logon',
+                    'encrypt', 'decrypt', 'crypt', 'key', 'cipher', 'hash',
+                    'reverse', 'inject', 'hook', 'shell', 'exec', 'execute',
+                    'download', 'upload', 'connect', 'socket', 'network',
+                    'service', 'registry', 'reg', 'run', 'start', 'stop',
+                    'remote', 'hidden', 'bypass', 'privilege', 'elevate',
+                    'packet', 'tcp', 'udp', 'http', 'https', 'ftp',
+                    'malware', 'virus', 'trojan', 'backdoor', 'loader',
+                    'credential', 'token', 'session', 'cookie', 'auth',
+                ]
+                
+                is_likely_malware = any(kw in normal_lower for kw in malware_keywords)
+                
+                # Keep if matches malware pattern OR is likely malware
+                if is_malware_pattern or is_likely_malware:
+                    reversed_strings.add(reversed_str)
+                    
             except:
                 pass
         
@@ -379,64 +471,6 @@ class StaticAnalyzer:
                 print(f"        Warning: Error analyzing {filename}: {e}")
         
         return combined
-    
-    def _extract_strings(self, data: bytes, encoding: str) -> Set[str]:
-        """Trích xuất strings có ý nghĩa"""
-        strings = set()
-        
-        if encoding == "ascii":
-            pattern = re.compile(rb'[\x20-\x7E]{%d,}' % self.min_string_length)
-            for match in pattern.findall(data):
-                try:
-                    s = match.decode('ascii')
-                    if self._is_meaningful_string(s):
-                        strings.add(s)
-                except:
-                    pass
-        else:  # utf-16le
-            pattern = re.compile(rb'(?:[\x20-\x7E]\x00){%d,}' % self.min_string_length)
-            for match in pattern.findall(data):
-                try:
-                    s = match.decode('utf-16le')
-                    if self._is_meaningful_string(s):
-                        strings.add(s)
-                except:
-                    pass
-        
-        return strings
-    
-    def _is_meaningful_string(self, s: str) -> bool:
-        """Kiểm tra string có ý nghĩa hay không"""
-        # Loại bỏ strings quá ngắn
-        if len(s) < self.min_string_length:
-            return False
-        
-        # Loại bỏ strings chỉ có số
-        if s.isdigit():
-            return False
-        
-        # Loại bỏ strings toàn ký tự đặc biệt
-        allowed = set(s) - set(string.printable)
-        if len(allowed) > len(s) * 0.5:
-            return False
-        
-        # Loại bỏ patterns quá phổ biến
-        common_patterns = [
-            r'^[A-Z]:\\',  # Windows paths
-            r'^/usr/',
-            r'\.dll$',
-            r'\.exe$',
-        ]
-        
-        for pattern in common_patterns:
-            if re.match(pattern, s, re.IGNORECASE):
-                return False
-        
-        return True
-    
-    def _is_pe_file(self, data: bytes) -> bool:
-        """Kiểm tra có phải PE file"""
-        return data[:2] == b'MZ'
     
     def _extract_opcodes(self, data: bytes, features: StaticFeatures) -> StaticFeatures:
         """Trích xuất opcode patterns sử dụng Capstone disassembly"""
