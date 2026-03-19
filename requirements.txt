@@ -1,3 +1,4 @@
 pefile>=2024.8.26
 capstone>=5.0.7
 requests>=2.32.5
+lxml>=4.9.0
