@@ -92,32 +92,12 @@ class MalwareCollector:
         
         return all_files
     
-    def _find_main_file(self, subdir: str) -> str | None:
-        """Tìm file chính trong thư mục mẫu"""
-        priority_exts = ['.exe', '.dll', '.scr', '.bat', '.cmd', '.vbs', '.js', '.wsf', 
-                        '.xls', '.xlsx', '.doc', '.docm', '.ppt', '.pptm']
-        
-        for root, _, files in os.walk(subdir):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                ext = os.path.splitext(filename)[1].lower()
-                
-                if ext in priority_exts:
-                    return file_path
-            
-            if files:
-                return os.path.join(root, files[0])
-        
-        return None
-    
     def _is_valid_malware(self, file_path: str) -> bool:
-        """Kiểm tra file có phải malware hợp lệ (chấp nhận tất cả các loại file)"""
         if not os.path.isfile(file_path):
             return False
         
         size = os.path.getsize(file_path)
         
-        # Chấp nhận tất cả các file có kích thước hợp lý
         return 512 <= size <= 1024 * 1024 * 100
     
     def _calculate_hashes(self, file_path: str) -> tuple:
