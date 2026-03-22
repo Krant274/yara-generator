@@ -1,12 +1,29 @@
 # Pipeline Hoạt Động - Auto-YARA Generator
 
-## Tổng Quan
+## Tổ Quan
 
 Chương trình tự động sinh luật YARA từ mẫu malware cùng họ (family).
 
 ```
 Input Files → Phase 1 → Phase 2 → Phase 3 → Phase 4 → YARA Rules
             Collector  Analyzer  Synthesizer Generator
+```
+
+---
+
+## Cấu Trúc Input
+
+**Yêu cầu:** Mỗi subdirectory = 1 variant của malware
+
+```
+malware_samples/
+├── Variant_A/
+│   ├── malware1.exe
+│   └── config.dat
+├── Variant_B/
+│   └── malware2.exe
+└── Variant_C/
+    └── payload.dll
 ```
 
 ---
@@ -22,10 +39,10 @@ Copy mẫu malware từ thư mục đầu vào vào thư mục làm việc.
 
 ```
 1. Đọc thư mục đầu vào
-   └── Mỗi subdirectory = 1 variant
+   └── Mỗi subdirectory = 1 variant (bắt buộc)
 
 2. Duyệt tất cả files trong từng variant
-   └── Thu thập TẤT CẢ các file (không lọc đuôi)
+   └── Thu thập TẤT CẢ các file 
 
 3. Kiểm tra file hợp lệ
    └── Kích thước: 512 bytes - 100MB
@@ -35,16 +52,6 @@ Copy mẫu malware từ thư mục đầu vào vào thư mục làm việc.
    └── Phát hiện loại file (PE32/PE64/ELF)
 
 5. Xuất manifest.json
-```
-
-### Input
-```
-malware_samples/
-├── Variant_A/
-│   ├── file1.exe
-│   └── file2.txt
-└── Variant_B/
-    └── file3.com
 ```
 
 ### Output
@@ -68,9 +75,9 @@ Với mỗi file:
 ├── 2. Trích xuất Strings
 │   ├── ASCII strings (độ dài ≥ 6)
 │   ├── Unicode strings (UTF-16LE)
-│   ├── Hex strings
-│   ├── Base64 strings
-│   └── Reversed strings (đảo ngược)
+│   ├── Hex strings (encoded)
+│   ├── Base64 strings (encoded)
+│   └── Reversed strings (đảo ngược - tránh detection)
 ├── 3. Tính Entropy
 │   ├── Shannon entropy toàn bộ file
 │   └── Entropy từng vùng 512 bytes
@@ -84,7 +91,7 @@ Với mỗi file:
 │   ├── Version Info
 │   └── Headers
 └── 5. Trích xuất Opcodes (nếu là PE)
-    ├── Disassemble từ Entry Point
+    ├── Disassemble từ Entry Point (Capstone)
     └── Opcode n-grams
 ```
 
@@ -108,9 +115,11 @@ Tìm features chung và lọc whitelist.
 
 2. Load whitelist vào memory
    ├── good-strings-*.db (~12M strings)
-   └── good-opcodes-*.db (~32M opcodes)
+   ├── good-opcodes-*.db (~34M opcodes)
+   ├── good-imphashes-*.db (~19K imphashes)
+   └── good-exports-*.db (~404K exports)
 
-3. String Scoring (giống yarGen)
+3. String Scoring (giống yarGen ~60 patterns)
    ├── Patterns tăng điểm:
    │   ├── IP address (+5)
    │   ├── Malware names (+10)
@@ -163,35 +172,34 @@ Tạo các luật YARA từ features.
    └── Tạo 1 rule chung cho cả family
 
 2. String Rules
-   ├── ASCII + Unicode strings (freq ≥ 0.5)
-   └── Condition: "N of them"
+   ├── ASCII + Unicode strings (freq ≥ 0.5, len ≤ 500)
+   └── Condition: "80% of them" + filesize
 
 3. Hex String Rules
-   ├── Hex-encoded strings (freq ≥ 0.7)
-   └── Condition: "N of them"
+   ├── Hex-encoded strings (freq ≥ 0.7, len ≤ 100)
+   └── Condition: "80% of them" + filesize
 
 4. Base64 Rules
    ├── Base64 patterns (freq ≥ 0.6)
-   └── Condition: "any of them"
+   └── Condition: "any of them" + filesize
 
 5. Reversed String Rules
    ├── Reversed strings (freq ≥ 0.7)
-   └── Condition: "N of them"
+   └── Condition: "80% of them" + filesize
 
 6. Import Rules
    ├── Characteristic imports (freq ≥ 0.4)
-   └── Condition: "any of them"
+   └── Condition: "80% of them"
 
 7. Opcode Rules
    ├── Opcode patterns (freq ≥ 0.4)
-   └── Condition: "any of them"
+   └── Condition: "80% of them"
 
-8. Entry Point Rules
-   └── Hex pattern tại entrypoint
+8. Imphash Rules
+   └── pe.imphash() == "hash_value"
 
-9. Composite Rules
-   ├── High entropy rule (nếu avg > 6.5)
-   └── PE header rule (MZ signature check)
+9. Entry Point Rules
+   └── Hex pattern tại pe.entry_point
 ```
 
 ### Condition Trong YARA
@@ -200,11 +208,11 @@ Tạo các luật YARA từ features.
 
 | Loại | Ví dụ | Mô tả |
 |------|-------|--------|
-| String match | `any of them` | Bất kỳ string nào match |
-| String match | `5 of them` | Ít nhất 5 strings match |
+| String match | `16 of them` | 80% strings phải match |
 | PE Header | `uint16(0) == 0x5A4D` | 2 bytes đầu = "MZ" |
 | Filesize | `filesize > 1MB and filesize < 10MB` | Kích thước trong khoảng |
-| Entry Point | `$hex0 at entrypoint` | Hex pattern tại EP |
+| Entry Point | `$hex0 at pe.entry_point` | Hex pattern tại EP |
+| Imphash | `pe.imphash() == "..."` | Import hash match |
 
 ### Filesize Condition
 - Tự động tính min/max size từ các mẫu
@@ -217,34 +225,29 @@ Tạo các luật YARA từ features.
 
 ---
 
-## Ví Dụ Rule Sinh Ra
+## Các Rules Được Sinh Ra
 
-```yara
-rule Test_strings {
-    meta:
-        description = "Auto-generated rule for Test - strings"
-        author = "AutoYaraGen"
-        date = "2026-03-19"
-        type = "string_based"
-        confidence = "high"
-        family = "Test"
-    strings:
-        $s0 = "GetProcessWindowStation" ascii wide
-        $s1 = "GetProcessHeap" ascii wide
-        $s2 = "CreateProcessA" ascii wide
-        // ... 133 strings nữa
-    condition:
-        (136 of them) and filesize > 1MB and filesize < 10MB
+```
+rule FamilyName_strings {
+    strings: $s0-$s19 (20 strings)
+    condition: (16 of them) and filesize > X and filesize < Y
 }
 
-rule Test_pe_header {
-    meta:
-        description = "Auto-generated rule for Test - PE header"
-        confidence = "high"
-        family = "Test"
-    condition:
-        uint16(0) == 0x5A4D
-}
+rule FamilyName_hex_strings { ... }
+
+rule FamilyName_base64 { ... }
+
+rule FamilyName_reversed { ... }
+
+rule FamilyName_imports { ... }
+
+rule FamilyName_opcodes { ... }
+
+rule FamilyName_imphash { ... }
+
+rule FamilyName_ep_bytes { ... }
+
+rule FamilyName_super { ... }  # Strings chung từ ≥ 2 variants
 ```
 
 ---
@@ -263,7 +266,7 @@ python main.py \
 | Tham số | Mô tả | Mặc định |
 |---------|-------|-----------|
 | `--family` | Tên malware family | Required |
-| `--input-dir` | Thư mục đầu vào | Required |
+| `--input-dir` | Thư mục đầu vào (mỗi subdir = 1 variant) | Required |
 | `--min-freq` | Tần suất tối thiểu (0.3-1.0) | 0.7 |
 | `--output` | Thư mục output | ./output |
 | `--dbs-dir` | Thư mục whitelist | ./dbs |
@@ -275,56 +278,59 @@ python main.py \
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Input: /path/to/malware/samples                         │
+│   (mỗi subdirectory = 1 variant)                       │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 1: MalwareCollector                                │
-│ • Copy files to output/samples/                         │
-│ • Calculate hashes                                      │
-│ • Detect file type                                      │
-│ Output: samples/ + manifest.json                         │
+│ Phase 1: MalwareCollector                              │
+│ • Copy files to output/samples/                        │
+│ • Calculate hashes                                     │
+│ • Detect file type                                     │
+│ Output: samples/ + manifest.json                       │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 2: StaticAnalyzer                                 │
-│ • Extract strings, hex, base64, reversed               │
-│ • Calculate entropy                                     │
-│ • Analyze PE (imports, exports, sections...)           │
-│ • Extract opcodes                                       │
-│ Output: analysis_results.json                           │
+│ Phase 2: StaticAnalyzer                                │
+│ • Extract strings, hex, base64, reversed              │
+│ • Calculate entropy                                    │
+│ • Analyze PE (imports, exports, sections...)          │
+│ • Extract opcodes (Capstone)                          │
+│ Output: analysis_results.json                          │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 3: FeatureSynthesizer                             │
-│ • Load whitelist (auto-download if missing)            │
-│ • String scoring (patterns, keywords)                   │
-│ • Count frequency per feature                          │
-│ • Filter by min_frequency + whitelist                 │
-│ Output: features.json                                   │
+│ Phase 3: FeatureSynthesizer                            │
+│ • Load whitelist (auto-download if missing)           │
+│ • String scoring (60+ patterns like yarGen)           │
+│ • Count frequency per feature                         │
+│ • Filter by min_frequency + whitelist                │
+│ Output: features.json                                  │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 4: YARAGenerator                                  │
-│ • Super Rules (multi-variant strings)                   │
-│ • String/hex/base64/reversed rules                      │
-│ • Import/opcode rules                                   │
-│ • EP bytes rule                                         │
-│ • Composite rules (entropy, PE header)                  │
-│ • Add filesize condition                                │
-│ Output: {family}.yar + metadata.json                    │
+│ Phase 4: YARAGenerator                                 │
+│ • Super Rules (multi-variant strings)                 │
+│ • String/hex/base64/reversed rules                    │
+│ • Import/imphash/opcode rules                         │
+│ • EP bytes rule                                       │
+│ • 80% condition threshold                             │
+│ • Add filesize condition                              │
+│ Output: {family}.yar + metadata.json                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
----
+## Yêu Cầu Hệ Thống
 
-## Các Tính Năng Cải Tiến
+- Python 3.8+
+- pefile
+- capstone
+- lxml (tùy chọn cho PEStudio scoring)
+- requests (cho auto-download)
 
-1. **String Scoring** - Hệ thống chấm điểm như yarGen
-2. **Super Rules** - Gộp strings từ nhiều variants
-3. **Filesize Condition** - Tự động thêm điều kiện kích thước
-4. **PE Header Condition** - Kiểm tra MZ signature
-5. **Auto-download Whitelist** - Tải database lần đầu nếu chưa có
+```bash
+pip install -r requirements.txt
+```

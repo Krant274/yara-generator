@@ -207,7 +207,7 @@ class AutoYARAPipeline:
 def main():
     parser = argparse.ArgumentParser(description="Auto-YARA Generator")
     parser.add_argument("--family", required=True, help="Malware family name")
-    parser.add_argument("--input-dir", required=True, help="Input directory containing malware samples")
+    parser.add_argument("--input-dir", required=True, help="Input directory containing malware samples (each subdirectory = 1 variant)")
     parser.add_argument("--min-freq", type=float, default=0.7, help="Min feature frequency (0.3-1.0)")
     parser.add_argument("--output", default="./output", help="Output directory")
     parser.add_argument("--dbs-dir", default="./dbs", help="Directory containing yarGen whitelist databases")

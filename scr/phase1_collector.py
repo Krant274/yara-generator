@@ -21,7 +21,10 @@ class MalwareSample:
 
 
 class MalwareCollector:
-    """Giai đoạn 1: Thu thập mẫu malware từ thư mục người dùng cung cấp"""
+    """Giai đoạn 1: Thu thập mẫu malware từ thư mục người dùng cung cấp
+    
+    Mỗi subdirectory = 1 variant
+    """
     
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
@@ -29,7 +32,11 @@ class MalwareCollector:
         os.makedirs(output_dir, exist_ok=True)
     
     def collect_from_directory(self, directory: str, family: str) -> List[MalwareSample]:
-        """Thu thập từ thư mục nội bộ (mỗi subdirectory = 1 mẫu malware, tất cả files)"""
+        """Thu thập từ thư mục nội bộ (mỗi subdirectory = 1 variant)"""
+        return self._collect_subdir(directory, family)
+    
+    def _collect_subdir(self, directory: str, family: str) -> List[MalwareSample]:
+        """Thu thập từ thư mục nội bộ (mỗi subdirectory = 1 mẫu malware)"""
         entries = sorted(os.listdir(directory))
         
         for entry in entries:
