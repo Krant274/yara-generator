@@ -188,10 +188,10 @@ class FeatureSynthesizer:
         'process_inject': (r'(VirtualAlloc|WriteProcessMemory|CreateRemoteThread|SetWindowsHook|ShellExecute|RunPE|reflectiveload|VirtualAllocEx|CreateRemoteThreadEx|QueueUserApc|RtlCreateUserThread|ZwCreateThread)', 7),
     }
     
-    def __init__(self, min_frequency: float = 0.7, dbs_dir: str = None, auto_download: bool = True):
+    def __init__(self, min_frequency: float = 0.7, auto_download: bool = True):
         self.min_frequency = min_frequency
-        self.dbs_dir = dbs_dir
-        self.whitelist = self._load_whitelist_from_dbs(dbs_dir, auto_download)
+        self.dbs_dir = "./dbs"  # Fixed directory
+        self.whitelist = self._load_whitelist_from_dbs(self.dbs_dir, auto_download)
         self.pestudio_strings = self._load_pestudio_strings()
     
     def _load_pestudio_strings(self) -> Dict[str, Dict]:

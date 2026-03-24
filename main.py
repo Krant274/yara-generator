@@ -147,8 +147,7 @@ class AutoYARAPipeline:
         print("[*] Phase 3: Feature Synthesis")
         
         min_freq = self.config.get("min_frequency", 0.7)
-        dbs_dir = self.config.get("dbs_dir", "./dbs")
-        synthesizer = FeatureSynthesizer(min_frequency=min_freq, dbs_dir=dbs_dir, auto_download=True)
+        synthesizer = FeatureSynthesizer(min_frequency=min_freq, auto_download=True)
         features = synthesizer.synthesize(analyses)
         
         # Save features
@@ -210,7 +209,6 @@ def main():
     parser.add_argument("--input-dir", required=True, help="Input directory containing malware samples (each subdirectory = 1 variant)")
     parser.add_argument("--min-freq", type=float, default=0.7, help="Min feature frequency (0.3-1.0)")
     parser.add_argument("--output", default="./output", help="Output directory")
-    parser.add_argument("--dbs-dir", default="./dbs", help="Directory containing yarGen whitelist databases")
     
     args = parser.parse_args()
     
@@ -223,7 +221,6 @@ def main():
         "input_dir": args.input_dir,
         "min_frequency": args.min_freq,
         "work_dir": args.output,
-        "dbs_dir": args.dbs_dir
     }
     
     pipeline = AutoYARAPipeline(config)
