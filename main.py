@@ -6,9 +6,9 @@ import argparse
 import hashlib
 from datetime import datetime
 from scr.phase1_collector import MalwareCollector
-from scr.phase3_analyzer import StaticAnalyzer
-from scr.phase4_feature_systhesis import FeatureSynthesizer
-from scr.phase6_yara_generator import YARAGenerator
+from scr.phase2_analyzer import StaticAnalyzer
+from scr.phase3_feature_systhesis import FeatureSynthesizer
+from scr.phase4_yara_generator import YARAGenerator
 
 
 class AutoYARAPipeline:

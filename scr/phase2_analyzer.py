@@ -1,34 +1,41 @@
-# src/phase3_analyzer.py
-import os
-import json
-import subprocess
-import hashlib
-import re
-import string
+# src/phase2_analyzer.py
 import base64
 import math
+import os
+import re
+import string
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+# Optional imports - handled gracefully if not installed
+try:
+    import pefile  # type: ignore
+except ImportError:
+    pefile = None
+
+try:
+    import capstone  # type: ignore
+except ImportError:
+    capstone = None
 
 
 @dataclass
 class StaticFeatures:
     """Đặc trưng tĩnh"""
+
     # Basic strings
     strings: Set[str] = field(default_factory=set)
     strings_unicode: Set[str] = field(default_factory=set)
-    
+
     # Enhanced string analysis
     hex_strings: Set[str] = field(default_factory=set)
     base64_strings: Set[str] = field(default_factory=set)
     reversed_strings: Set[str] = field(default_factory=set)
-    
+
     # Opcode analysis
     opcodes: Set[str] = field(default_factory=set)
     opcode_sequences: List[str] = field(default_factory=list)
-    
+
     # PE metadata
     imports: Set[str] = field(default_factory=set)
     exports: Set[str] = field(default_factory=set)
@@ -39,7 +46,7 @@ class StaticFeatures:
     resources: List[Dict] = field(default_factory=list)
     headers: Dict = field(default_factory=dict)
     version_info: Dict = field(default_factory=dict)
-    
+
     # File characteristics
     file_size: int = 0
     entropy: float = 0.0
@@ -47,278 +54,388 @@ class StaticFeatures:
 
 class StaticAnalyzer:
     """Phân tích tĩnh nâng cao"""
-    
+
     def __init__(self):
         self.min_string_length = 6
-    
+
     def analyze(self, file_path: str) -> StaticFeatures:
         """Phân tích tĩnh toàn diện"""
         features = StaticFeatures()
-        
+
         with open(file_path, "rb") as f:
             data = f.read()
-        
+
         features.file_size = len(data)
-        
+
         # 1. Basic strings
         features.strings = self._extract_strings(data, "ascii")
         features.strings_unicode = self._extract_strings(data, "utf-16le")
-        
+
         # 2. Enhanced strings
         features.hex_strings = self._extract_hex_strings(data)
         features.base64_strings = self._extract_base64_strings(data)
         features.reversed_strings = self._extract_reversed_strings(data)
-        
+
         # 3. Calculate entropy
         features.entropy = self._calculate_entropy(data)
-        
+
         # 4. Opcode analysis (simple pattern-based)
         if self._is_pe_file(data):
             features = self._extract_opcodes(data, features)
-        
+
         # 5. PE analysis
         if self._is_pe_file(data):
             features = self._analyze_pe(data, features)
-        
+
         # 5. Section entropies
         features.section_entropies = self._calculate_section_entropies(data)
-        
+
         return features
-    
+
     def _extract_hex_strings(self, data: bytes) -> Set[str]:
         """Trích xuất hex-encoded strings (ví dụ: 4D5A0000)"""
         hex_strings = set()
-        
+
         # Tìm sequences of hex bytes có thể là strings
         # Pattern: 4-50 ký tự hex liên tiếp
-        hex_pattern = re.compile(rb'(?:[0-9A-Fa-f]{2}){4,50}')
-        
+        hex_pattern = re.compile(rb"(?:[0-9A-Fa-f]{2}){4,50}")
+
         for match in hex_pattern.findall(data):
             try:
-                decoded = match.decode('ascii')
+                decoded = match.decode("ascii")
                 # Chỉ lấy nếu decode được thành printable chars
                 decoded_bytes = bytes.fromhex(decoded)
-                if all(0x20 <= b < 0x7F or b in [0x0A, 0x0D, 0x09] for b in decoded_bytes):
+                if all(
+                    0x20 <= b < 0x7F or b in [0x0A, 0x0D, 0x09] for b in decoded_bytes
+                ):
                     if len(decoded_bytes) >= 4:
                         hex_strings.add(decoded)
             except:
                 pass
-        
+
         return hex_strings
-    
+
     def _extract_base64_strings(self, data: bytes) -> Set[str]:
         """Trích xuất base64-encoded strings"""
         b64_strings = set()
-        
+
         # Tìm pattern base64 thường gặp
-        b64_pattern = re.compile(rb'[A-Za-z0-9+/]{8,}={0,2}')
-        
+        b64_pattern = re.compile(rb"[A-Za-z0-9+/]{8,}={0,2}")
+
         for match in b64_pattern.findall(data):
             try:
                 decoded = base64.b64decode(match)
                 # Chỉ lấy nếu decode ra readable content
-                if all(0x20 <= b < 0x7F or b in [0x0A, 0x0D, 0x09] for b in decoded[:50]):
-                    b64_strings.add(match.decode('ascii'))
+                if all(
+                    0x20 <= b < 0x7F or b in [0x0A, 0x0D, 0x09] for b in decoded[:50]
+                ):
+                    b64_strings.add(match.decode("ascii"))
             except:
                 pass
-        
+
         return b64_strings
-    
+
     def _extract_reversed_strings(self, data: bytes) -> Set[str]:
         """Trích xuất reversed strings (thường dùng trong malware)
-        
+
         Cải thiện:
         - Chỉ giữ lại reversed strings có pattern đặc biệt (malware indicators)
         - Lọc bỏ các reversed strings phổ biến
         """
         reversed_strings = set()
-        
+
         # Patterns đặc biệt - reversed strings có thể là malware indicators
         MALWARE_REVERSED_PATTERNS = [
-            r'exe\.dmc',           # reversed: "cmd.exe"
-            r'dmc\.exe',          # reversed: "exe.cmd"
-            r'sses\.exe',          # reversed: "exe.sse" 
-            r'dmc',                # reversed: "cmd"
-            r'noisrev',            # reversed: "version"
-            r'resu',              # reversed: "user"
-            r'ssap',              # reversed: "pass"
-            r'drowssap',          # reversed: "password"
-            r'krow',              # reversed: "work"
-            r'gol',                # reversed: "log"
-            r'taercs',            # reversed: "secret"
-            r'xotno',              # reversed: "notox"
-            r'tiderc',            # reversed: "credit"
-            r'ssecorp',           # reversed: "process"
-            r'ssolc',             # reversed: "close"
-            r'elppa',             # reversed: "apple"
-            r'taolf',             # reversed: "float"
-            r'noitcnuf',          # reversed: "function"
-            r'ssegami',           # reversed: "image"
-            r'evird',             # reversed: "drive"
-            r'pirts',             # reversed: "strip"
-            r'xedni',             # reversed: "index"
-            r'dnar',              # reversed: "rand"
-            r'tseug',             # reversed: "guest"
-            r'taerc',             # reversed: "creat"
-            r'nosj',              # reversed: "json"
-            r'diov',              # reversed: "void"
-            r'xob',                # reversed: "box"
-            r'diov',              # reversed: "void"
-            r'elgoog',           # reversed: "google"
-            r'rah',               # reversed: "har" (ihar = riha)
-            r'reif',              # reversed: "fire"
-            r'retupmoc',          # reversed: "computer"
-            r'sserdda',           # reversed: "address"
-            r'teniF',             # reversed: "File"
-            r'su',               # reversed: "us"
-            r'ts',               # reversed: "st"
+            r"exe\.dmc",  # reversed: "cmd.exe"
+            r"dmc\.exe",  # reversed: "exe.cmd"
+            r"sses\.exe",  # reversed: "exe.sse"
+            r"dmc",  # reversed: "cmd"
+            r"noisrev",  # reversed: "version"
+            r"resu",  # reversed: "user"
+            r"ssap",  # reversed: "pass"
+            r"drowssap",  # reversed: "password"
+            r"krow",  # reversed: "work"
+            r"gol",  # reversed: "log"
+            r"taercs",  # reversed: "secret"
+            r"xotno",  # reversed: "notox"
+            r"tiderc",  # reversed: "credit"
+            r"ssecorp",  # reversed: "process"
+            r"ssolc",  # reversed: "close"
+            r"elppa",  # reversed: "apple"
+            r"taolf",  # reversed: "float"
+            r"noitcnuf",  # reversed: "function"
+            r"ssegami",  # reversed: "image"
+            r"evird",  # reversed: "drive"
+            r"pirts",  # reversed: "strip"
+            r"xedni",  # reversed: "index"
+            r"dnar",  # reversed: "rand"
+            r"tseug",  # reversed: "guest"
+            r"taerc",  # reversed: "creat"
+            r"nosj",  # reversed: "json"
+            r"diov",  # reversed: "void"
+            r"xob",  # reversed: "box"
+            r"diov",  # reversed: "void"
+            r"elgoog",  # reversed: "google"
+            r"rah",  # reversed: "har" (ihar = riha)
+            r"reif",  # reversed: "fire"
+            r"retupmoc",  # reversed: "computer"
+            r"sserdda",  # reversed: "address"
+            r"teniF",  # reversed: "File"
+            r"su",  # reversed: "us"
+            r"ts",  # reversed: "st"
         ]
-        
+
         # Compile patterns
         import re
-        compiled_patterns = [re.compile(p, re.IGNORECASE) for p in MALWARE_REVERSED_PATTERNS]
-        
+
+        compiled_patterns = [
+            re.compile(p, re.IGNORECASE) for p in MALWARE_REVERSED_PATTERNS
+        ]
+
         # Tìm tất cả ASCII strings trong file
-        ascii_strings = re.findall(rb'[\x20-\x7E]{6,}', data)
-        
+        ascii_strings = re.findall(rb"[\x20-\x7E]{6,}", data)
+
         # Common strings that when reversed are still meaningless - skip these
         COMMON_STRINGS = {
-            'example', 'elpmaxe', 'sample', 'elpmas', 'string', 'gnirts',
-            'number', 'rebmuN', 'output', 'tuptuo', 'input', 'tupni',
-            'object', 'tcejbo', 'method', 'dohtem', 'system', 'metsys',
-            'return', 'nruter', 'config', 'xofnigc', 'public', 'cublip',
-            'server', 'revres', 'client', 'tnialc', 'process', 'ssecorp',
-            'kernel', 'lenrek', 'window', 'wodniW', 'system32', '23metsy',
-            'program', 'margorp', 'windowS', 'SwodniW', 'microsoft', 'tfosorciM',
+            "example",
+            "elpmaxe",
+            "sample",
+            "elpmas",
+            "string",
+            "gnirts",
+            "number",
+            "rebmuN",
+            "output",
+            "tuptuo",
+            "input",
+            "tupni",
+            "object",
+            "tcejbo",
+            "method",
+            "dohtem",
+            "system",
+            "metsys",
+            "return",
+            "nruter",
+            "config",
+            "xofnigc",
+            "public",
+            "cublip",
+            "server",
+            "revres",
+            "client",
+            "tnialc",
+            "process",
+            "ssecorp",
+            "kernel",
+            "lenrek",
+            "window",
+            "wodniW",
+            "system32",
+            "23metsy",
+            "program",
+            "margorp",
+            "windowS",
+            "SwodniW",
+            "microsoft",
+            "tfosorciM",
         }
-        
+
         for s in ascii_strings:
             try:
-                normal = s.decode('ascii')
+                normal = s.decode("ascii")
                 reversed_str = normal[::-1]
                 normal_lower = normal.lower()
                 reversed_lower = reversed_str.lower()
-                
+
                 # Skip if same (palindrome or too short)
                 if normal == reversed_str or len(normal) < 6:
                     continue
-                
+
                 # Skip if NOT printable
                 if not all(c in string.printable for c in reversed_str[:10]):
                     continue
-                
+
                 # Skip if BOTH normal and reversed are common strings
                 if normal_lower in COMMON_STRINGS and reversed_lower in COMMON_STRINGS:
                     continue
-                
+
                 # Check if reversed string matches special malware patterns
-                is_malware_pattern = any(p.search(reversed_str) for p in compiled_patterns)
-                
+                is_malware_pattern = any(
+                    p.search(reversed_str) for p in compiled_patterns
+                )
+
                 # Check if normal string is likely malware-related
                 malware_keywords = [
-                    'cmd', 'exe', 'dll', 'sys', 'bat', 'ps1', 'vbs', 'js', 'wsf', 'com',
-                    'password', 'pass', 'user', 'admin', 'root', 'login', 'logon',
-                    'encrypt', 'decrypt', 'crypt', 'key', 'cipher', 'hash',
-                    'reverse', 'inject', 'hook', 'shell', 'exec', 'execute',
-                    'download', 'upload', 'connect', 'socket', 'network',
-                    'service', 'registry', 'reg', 'run', 'start', 'stop',
-                    'remote', 'hidden', 'bypass', 'privilege', 'elevate',
-                    'packet', 'tcp', 'udp', 'http', 'https', 'ftp',
-                    'malware', 'virus', 'trojan', 'backdoor', 'loader',
-                    'credential', 'token', 'session', 'cookie', 'auth',
+                    "cmd",
+                    "exe",
+                    "dll",
+                    "sys",
+                    "bat",
+                    "ps1",
+                    "vbs",
+                    "js",
+                    "wsf",
+                    "com",
+                    "password",
+                    "pass",
+                    "user",
+                    "admin",
+                    "root",
+                    "login",
+                    "logon",
+                    "encrypt",
+                    "decrypt",
+                    "crypt",
+                    "key",
+                    "cipher",
+                    "hash",
+                    "reverse",
+                    "inject",
+                    "hook",
+                    "shell",
+                    "exec",
+                    "execute",
+                    "download",
+                    "upload",
+                    "connect",
+                    "socket",
+                    "network",
+                    "service",
+                    "registry",
+                    "reg",
+                    "run",
+                    "start",
+                    "stop",
+                    "remote",
+                    "hidden",
+                    "bypass",
+                    "privilege",
+                    "elevate",
+                    "packet",
+                    "tcp",
+                    "udp",
+                    "http",
+                    "https",
+                    "ftp",
+                    "malware",
+                    "virus",
+                    "trojan",
+                    "backdoor",
+                    "loader",
+                    "credential",
+                    "token",
+                    "session",
+                    "cookie",
+                    "auth",
                 ]
-                
+
                 is_likely_malware = any(kw in normal_lower for kw in malware_keywords)
-                
+
                 # Keep if matches malware pattern OR is likely malware
                 if is_malware_pattern or is_likely_malware:
                     reversed_strings.add(reversed_str)
-                    
+
             except:
                 pass
-        
+
         return reversed_strings
-    
+
     def _calculate_entropy(self, data: bytes) -> float:
         """Tính Shannon entropy"""
         if not data:
             return 0.0
-        
+
         byte_counts = [0] * 256
         for byte in data:
             byte_counts[byte] += 1
-        
+
         entropy = 0.0
         data_len = len(data)
-        
+
         for count in byte_counts:
             if count == 0:
                 continue
             probability = count / data_len
             entropy -= probability * math.log2(probability)
-        
+
         return round(entropy, 2)
-    
+
     def _analyze_pe(self, data: bytes, features: StaticFeatures) -> StaticFeatures:
         """Phân tích chi tiết PE file"""
+        if pefile is None:
+            return features
+
         try:
-            import pefile
-            
             pe = pefile.PE(data=data)
-            
+
             # Imports
-            if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT'):
+            if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
                 for entry in pe.DIRECTORY_ENTRY_IMPORT:
-                    dll_name = entry.dll.decode('utf-8', errors='ignore')
+                    dll_name = entry.dll.decode("utf-8", errors="ignore")
                     features.imports.add(dll_name.lower())
                     for imp in entry.imports:
                         if imp.name:
-                            features.imports.add(imp.name.decode('utf-8', errors='ignore').lower())
-            
+                            features.imports.add(
+                                imp.name.decode("utf-8", errors="ignore").lower()
+                            )
+
             # Exports
-            if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
+            if hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
                 for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
                     if exp.name:
-                        features.exports.add(exp.name.decode('utf-8', errors='ignore').lower())
-            
+                        features.exports.add(
+                            exp.name.decode("utf-8", errors="ignore").lower()
+                        )
+
             # Sections
             for section in pe.sections:
-                section_name = section.Name.decode('utf-8', errors='ignore').strip('\x00')
-                features.pe_sections.append({
-                    "name": section_name,
-                    "virtual_address": section.VirtualAddress,
-                    "virtual_size": section.Misc_VirtualSize,
-                    "raw_size": section.SizeOfRawData,
-                    "entropy": round(section.get_entropy(), 2),
-                    "characteristics": hex(section.Characteristics)
-                })
-                features.section_entropies[section_name] = round(section.get_entropy(), 2)
-            
+                section_name = section.Name.decode("utf-8", errors="ignore").strip(
+                    "\x00"
+                )
+                features.pe_sections.append(
+                    {
+                        "name": section_name,
+                        "virtual_address": section.VirtualAddress,
+                        "virtual_size": section.Misc_VirtualSize,
+                        "raw_size": section.SizeOfRawData,
+                        "entropy": round(section.get_entropy(), 2),
+                        "characteristics": hex(section.Characteristics),
+                    }
+                )
+                features.section_entropies[section_name] = round(
+                    section.get_entropy(), 2
+                )
+
             # Import hash
             features.imphash = pe.get_imphash()
-            
+
             # Entry point bytes
             if pe.OPTIONAL_HEADER.AddressOfEntryPoint:
-                ep_offset = pe.get_offset_from_rva(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
-                ep_bytes = data[ep_offset:ep_offset + 32]
-                features.ep_bytes = ' '.join([f'{b:02x}' for b in ep_bytes])
-            
+                ep_offset = pe.get_offset_from_rva(
+                    pe.OPTIONAL_HEADER.AddressOfEntryPoint
+                )
+                ep_bytes = data[ep_offset : ep_offset + 32]
+                features.ep_bytes = " ".join([f"{b:02x}" for b in ep_bytes])
+
             # Resources
-            if hasattr(pe, 'DIRECTORY_ENTRY_RESOURCE'):
+            if hasattr(pe, "DIRECTORY_ENTRY_RESOURCE"):
                 for resource_type in pe.DIRECTORY_ENTRY_RESOURCE.entries:
-                    if hasattr(resource_type, 'directory'):
+                    if hasattr(resource_type, "directory"):
                         for resource_id in resource_type.directory.entries:
-                            if hasattr(resource_id, 'directory'):
+                            if hasattr(resource_id, "directory"):
                                 for resource_lang in resource_id.directory.entries:
-                                    features.resources.append({
-                                        "type": resource_type.id,
-                                        "id": resource_id.id,
-                                        "lang": resource_lang.id,
-                                        "size": resource_lang.data.struct.Size
-                                    })
-            
+                                    features.resources.append(
+                                        {
+                                            "type": resource_type.id,
+                                            "id": resource_id.id,
+                                            "lang": resource_lang.id,
+                                            "size": resource_lang.data.struct.Size,
+                                        }
+                                    )
+
             # Version info
-            if hasattr(pe, 'VS_FIXEDFILEINFO'):
+            if hasattr(pe, "VS_FIXEDFILEINFO"):
                 vs = pe.VS_FIXEDFILEINFO[0]
                 features.version_info = {
                     "signature": vs.Signature,
@@ -327,7 +444,7 @@ class StaticAnalyzer:
                     "product_version_ms": vs.ProductVersionMS,
                     "product_version_ls": vs.ProductVersionLS,
                 }
-            
+
             # Headers
             features.headers = {
                 "machine": pe.FILE_HEADER.Machine,
@@ -338,115 +455,115 @@ class StaticAnalyzer:
                 "dll_characteristics": pe.OPTIONAL_HEADER.DllCharacteristics,
                 "size_of_image": pe.OPTIONAL_HEADER.SizeOfImage,
             }
-            
+
         except ImportError:
             print("        [!] pip install pefile")
         except Exception:
             pass
-        
+
         return features
-    
+
     def _calculate_section_entropies(self, data: bytes) -> Dict[str, float]:
         """Tính entropy từng vùng trong file"""
         entropies = {}
         chunk_size = 512
-        
+
         for i in range(0, len(data), chunk_size):
-            chunk = data[i:i + chunk_size]
+            chunk = data[i : i + chunk_size]
             if len(chunk) < 100:
                 continue
-            
+
             byte_counts = [0] * 256
             for byte in chunk:
                 byte_counts[byte] += 1
-            
+
             entropy = 0.0
             for count in byte_counts:
                 if count > 0:
                     prob = count / len(chunk)
                     entropy -= prob * math.log2(prob)
-            
+
             entropies[f"offset_0x{i:08x}"] = round(entropy, 2)
-        
+
         return entropies
-    
+
     def _extract_strings(self, data: bytes, encoding: str) -> Set[str]:
         """Trích xuất strings có ý nghĩa"""
         strings = set()
-        
+
         if encoding == "ascii":
-            pattern = re.compile(rb'[\x20-\x7E]{%d,}' % self.min_string_length)
+            pattern = re.compile(rb"[\x20-\x7E]{%d,}" % self.min_string_length)
             for match in pattern.findall(data):
                 try:
-                    s = match.decode('ascii')
+                    s = match.decode("ascii")
                     if self._is_meaningful_string(s):
                         strings.add(s)
                 except:
                     pass
         else:
-            pattern = re.compile(rb'(?:[\x20-\x7E]\x00){%d,}' % self.min_string_length)
+            pattern = re.compile(rb"(?:[\x20-\x7E]\x00){%d,}" % self.min_string_length)
             for match in pattern.findall(data):
                 try:
-                    s = match.decode('utf-16le')
+                    s = match.decode("utf-16le")
                     if self._is_meaningful_string(s):
                         strings.add(s)
                 except:
                     pass
-        
+
         return strings
-    
+
     def _is_meaningful_string(self, s: str) -> bool:
         """Kiểm tra string có ý nghĩa"""
         if len(s) < self.min_string_length:
             return False
         if s.isdigit():
             return False
-        
+
         allowed = set(s) - set(string.printable)
         if len(allowed) > len(s) * 0.5:
             return False
-        
-        common_patterns = [r'^[A-Z]:\\', r'^/usr/', r'\.dll$', r'\.exe$']
+
+        common_patterns = [r"^[A-Z]:\\", r"^/usr/", r"\.dll$", r"\.exe$"]
         for pattern in common_patterns:
             if re.match(pattern, s, re.IGNORECASE):
                 return False
-        
+
         return True
-    
+
     def _is_pe_file(self, data: bytes) -> bool:
         """Kiểm tra có phải PE file"""
-        return data[:2] == b'MZ'
-    
+        return data[:2] == b"MZ"
+
     def analyze_directory(self, dir_path: str) -> StaticFeatures:
         """Phân tích tất cả files trong directory và gộp features"""
         combined = StaticFeatures()
-        
+
         for filename in os.listdir(dir_path):
             file_path = os.path.join(dir_path, filename)
-            
+
             if not os.path.isfile(file_path):
                 continue
-            
+
             try:
                 result = self.analyze(file_path)
-                
+
                 # Merge basic strings
                 combined.strings.update(result.strings)
                 combined.strings_unicode.update(result.strings_unicode)
-                
+
                 # Merge enhanced strings
                 combined.hex_strings.update(result.hex_strings)
                 combined.base64_strings.update(result.base64_strings)
                 combined.reversed_strings.update(result.reversed_strings)
-                
+
                 # Merge opcodes
                 combined.opcodes.update(result.opcodes)
                 combined.opcode_sequences.extend(result.opcode_sequences)
-                
+
                 # Merge PE features
                 combined.imports.update(result.imports)
                 combined.exports.update(result.exports)
-                
+
                 # Take first non-None values
                 if not combined.imphash and result.imphash:
                     combined.imphash = result.imphash
@@ -456,61 +573,58 @@ class StaticAnalyzer:
                     combined.headers = result.headers
                 if not combined.version_info and result.version_info:
                     combined.version_info = result.version_info
-                
+
                 # Merge sections and resources
                 combined.pe_sections.extend(result.pe_sections)
                 combined.resources.extend(result.resources)
-                
+
                 # Update file stats (take max)
                 if result.file_size > combined.file_size:
                     combined.file_size = result.file_size
                 if result.entropy > combined.entropy:
                     combined.entropy = result.entropy
-                    
+
             except Exception as e:
                 print(f"        Warning: Error analyzing {filename}: {e}")
-        
+
         return combined
-    
+
     def _extract_opcodes(self, data: bytes, features: StaticFeatures) -> StaticFeatures:
         """Trích xuất opcode patterns sử dụng Capstone disassembly"""
-        
+
+        if pefile is None or capstone is None:
+            return features
+
         try:
-            import pefile
-            import capstone
-            
             pe = pefile.PE(data=data)
-            
+
             if not pe.OPTIONAL_HEADER.AddressOfEntryPoint:
                 return features
-                
+
             ep_offset = pe.get_offset_from_rva(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
-            code_region = data[ep_offset:ep_offset + 1024]
-            
+            code_region = data[ep_offset : ep_offset + 1024]
+
             md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
             md.detail = False
-            
+
             opcode_ngrams = []
             for insn in md.disasm(code_region, ep_offset):
                 hex_bytes = insn.bytes.hex()
                 features.opcodes.add(hex_bytes)
-                
+
                 opcode_ngrams.append(hex_bytes[:2])
-                
+
                 if len(insn.bytes) >= 2:
                     opcode_ngrams.append(hex_bytes[:4])
-                
+
                 if len(insn.bytes) >= 3:
                     opcode_ngrams.append(hex_bytes[:6])
-            
+
             features.opcode_sequences = opcode_ngrams[:100]
-                    
+
         except ImportError:
             pass
         except Exception:
             pass
-        
+
         return features
-    
-
-
